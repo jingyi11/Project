@@ -1,0 +1,450 @@
+
+```{r}
+setwd("/Users/gjy/Desktop/6210/hw/final project")
+library("XLConnect")
+wine <- readWorksheetFromFile("winequality-red.xls",sheet=1,startRow=1)
+wine$no <- NULL
+```
+
+```{r}
+plot(wine)
+library(corrplot)
+corrplot(cor(wine))
+```
+From this plot, there are no significant correlation between each pair of variables.
+
+```{r}
+library(reshape)
+library(ggplot2)
+wine.melt <- melt(wine)
+wine.melt2 <- cbind(wine.melt, quality=wine$quality)
+ggplot(wine.melt2,aes(x=value,y=quality))+geom_point()+facet_wrap(~variable,scales="free")
+ggplot(wine.melt2,aes(x=value,y=quality))+stat_bin2d()+facet_wrap(~variable,scales="free")
+```
+There are not any obvious transformations needed for this dataset. 
+
+```{r}
+#Best subset selection for variable selection.
+library(leaps)
+regfit.full <- regsubsets(quality~.,wine,nvmax=11)
+regfit.summary <- summary(regfit.full)
+regfit.summary
+plot(regfit.summary$bic)
+which.min(regfit.summary$bic)
+```
+The 6th model has the lowese BIC, and this model contains volatile.acidity, chlorides, total.sulfur.dioxide, pH, sulphates, alcohol.
+
+```{r}
+#check the models chosen by best subset selection using cross validation.
+library(boot)
+CVmse <- rep(0,11)
+for(i in 1:11){
+  tempCols <- which(regfit.summary$which[i,-1]==TRUE)
+  tempCols <- c(tempCols,12)
+  tempCols <- as.numeric(tempCols)
+  tempGLM <- glm(quality~.,data=wine[,tempCols])
+  tempCV <- cv.glm(tempGLM,data=wine[,tempCols],K=10)
+  CVmse[i] <- tempCV$delta[1]
+}
+plot(CVmse)
+which.min(CVmse)
+min(CVmse)
+```
+The model with the lowest cross validation error is the 8th model which does not include density, fixed.acidity and residual.sugar.
+
+```{r}
+#Try lasso to see if we can achieve lower MSE.
+library(glmnet)
+lasso.cv <- cv.glmnet(x=as.matrix(wine[,-12]),y=as.matrix(wine[,12]),alpha=1,nfolds = 10)
+plot(lasso.cv)
+min(lasso.cv$cvm)
+```
+Lowest MSE is 0.4242823 which is a little higher than the one that we obtained with the best subset selection.
+So we will choose the model that has the minimum MSE which does not include density, fixed.acidity and residual.sugar.
+And the MSE of the linear regression is 0.4222703
+Next we will try the polynomial regression.
+
+```{r}
+lm1 <- lm(quality~. -density - fixed.acidity - residual.sugar, data=wine)
+#plot the residuals with respect to each covariate
+library(reshape)
+library(ggplot2)
+wine.melt3 <- cbind(wine.melt, resid=lm1$residuals)
+ggplot(wine.melt3,aes(x=value,y=resid))+geom_point()+geom_smooth(method="loess")+facet_wrap(~variable,scales="free")
+```
+There are obvious non-linearities with respect to volatile.acidity, chlorides, total.sulfur.dioxide, pH, sulphates and alcohol.
+We will go in that order and try polynomial regression with different terms for each of the variables. We will choose the order of polynomials using cross validation.
+
+```{r}
+#transforming volatile.acidity
+volacidMSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(quality~.-density - fixed.acidity - residual.sugar-volatile.acidity+poly(volatile.acidity,i),data=wine)
+  tempCV <- cv.glm(wine,templm,K = 10)
+  volacidMSE[i] <- tempCV$delta[1]
+}
+plot(volacidMSE)
+which.min(volacidMSE)
+```
+Minimum is obtained with a 3rd degree polynomial for volatile.acidity but the MSE values are very stable and the difference between a linear model and a polynomial model does not appear to be significant.
+
+```{r}
+#transforming chlorides
+chloridesMSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(quality~.-density - fixed.acidity - residual.sugar-chlorides++poly(chlorides,i),data=wine)
+  tempCV <- cv.glm(wine,templm,K = 10)
+  chloridesMSE[i] <- tempCV$delta[1]
+}
+plot(chloridesMSE)
+which.min(chloridesMSE)
+```
+Minimum is obtained with a 10th degree polynomial for chlorides.
+
+```{r}
+#transforming total.sulfur.dioxide
+tsdMSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(quality~.-density - fixed.acidity - residual.sugar-total.sulfur.dioxide-chlorides+poly(chlorides,10)+poly(total.sulfur.dioxide,i),data=wine)
+  tempCV <- cv.glm(wine,templm,K = 10)
+  tsdMSE[i] <- tempCV$delta[1]
+}
+plot(tsdMSE)
+which.min(tsdMSE)
+```
+Minimum is obtained with a 5th degree polynomial for volatile.acidity.
+
+```{r}
+#transforming pH
+pHMSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(quality~.-density - fixed.acidity - residual.sugar-total.sulfur.dioxide-chlorides-pH+poly(pH,i)+poly(chlorides,10)+poly(total.sulfur.dioxide,5),data=wine)
+  tempCV <- cv.glm(wine,templm,K = 10)
+  pHMSE[i] <- tempCV$delta[1]
+}
+plot(pHMSE)
+which.min(pHMSE)
+```
+Minimum is obtained with a 3rd degree polynomial for pH but the MSE values are very stable and the difference between a linear model and a polynomial model does not appear to be significant.
+
+```{r}
+#transforming sulphates
+sulphatesMSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(quality~.-density - fixed.acidity - residual.sugar-total.sulfur.dioxide-chlorides-sulphates+poly(sulphates,i)+poly(chlorides,10)+poly(total.sulfur.dioxide,5),data=wine)
+  tempCV <- cv.glm(wine,templm,K = 10)
+  sulphatesMSE[i] <- tempCV$delta[1]
+}
+plot(sulphatesMSE)
+which.min(sulphatesMSE)
+```
+Minimum is obtained with a 10th degree polynomial for sulphates but the MSE values are very stable and the difference between a linear model and a polynomial model does not appear to be significant.
+
+```{r}
+#transforming alcohol
+alcoholMSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(quality~.-density - fixed.acidity - residual.sugar-total.sulfur.dioxide-chlorides-alcohol+poly(alcohol,i)+poly(chlorides,10)+poly(total.sulfur.dioxide,5),data=wine)
+  tempCV <- cv.glm(wine,templm,K = 10)
+  alcoholMSE[i] <- tempCV$delta[1]
+}
+plot(alcoholMSE)
+which.min(alcoholMSE)
+```
+Minimum is obtained with a 5th degree polynomial for alcohol but the MSE values are very stable and the difference between a linear model and a polynomial model does not appear to be significant.
+
+So the final polynominal model is 
+```{r}
+finalpolyLm <- lm(quality~ volatile.acidity+citric.acid+poly(chlorides,10)+poly(total.sulfur.dioxide,5)+free.sulfur.dioxide++pH+sulphates+alcohol,data=wine)
+summary(finalpolyLm)
+finalpolyGLM <- glm(quality~volatile.acidity+citric.acid+poly(chlorides,10)+poly(total.sulfur.dioxide,5)+free.sulfur.dioxide+pH+sulphates+alcohol,data=wine)
+cv.glm(wine,finalpolyGLM,K=10)$delta[1]
+```
+The MSE is 0.4212386 which does not changed a lot, so the polynomial regression might not suitable for this dataset.
+
+Check model diagnostics:
+```{r}
+#1.Residuals have a Gaussian distribution.
+shapiro.test(finalpolyLm$residuals)
+library(car)
+plot(finalpolyLm, which=4)
+#We try removing these outliers and fitting the model again.
+finalpolyLmWO <- lm(quality~volatile.acidity+citric.acid+poly(chlorides,10)+poly(total.sulfur.dioxide,5)+free.sulfur.dioxide+pH+sulphates+alcohol,data=wine[-c(259,152,1375),])
+shapiro.test(finalpolyLmWO$residuals)
+qqPlot(finalpolyLmWO)
+```
+There are no serious heavy tails.
+
+```{r}
+#We also check for homoskedasticity
+library(car)
+ncvTest(finalpolyLmWO)
+```
+
+```{r}
+#obtain bootstrap confidence interval.
+boot.fn <- function(data,index){
+    tempLm <- lm(quality~volatile.acidity+citric.acid+poly(chlorides,10)+poly(total.sulfur.dioxide,5)+free.sulfur.dioxide+pH+sulphates+alcohol,data=data,subset=index)
+    tempCoef <- coef(tempLm)
+    return(tempCoef)
+  }
+boot(wine,boot.fn,R=1000)
+#obtain confidence interval from normal approximation.
+confint(finalpolyLmWO)
+```
+
+```{r}
+#Next, we fit an additive model. We will use splines for the polynomial terms.
+library(mgcv)
+gam.wine <- gam(quality~volatile.acidity+citric.acid+s(chlorides)+s(total.sulfur.dioxide)+free.sulfur.dioxide++pH+sulphates+alcohol,data=wine)
+summary(gam.wine)
+library(gamclass)
+CVgam(formula(gam.wine),wine,nfold=10)
+summary(finalpolyLmWO)
+```
+
+```{r}
+#Let us now check if we can improve our model by using splines for other coefficients.
+#Using a spline for volatile.acidity
+gam.wine.volatile.acidity <-gam(quality~s(volatile.acidity)+citric.acid+s(chlorides)+s(total.sulfur.dioxide)+free.sulfur.dioxide+pH+sulphates+alcohol,data=wine)
+anova(gam.wine,gam.wine.volatile.acidity,test="F")
+CVgam(formula(gam.wine.volatile.acidity),wine,nfold=10)
+```
+Using a spline for volatile.acidity doesn't make a difference.
+
+```{r}
+#Using a spline for citric.acid
+gam.wine.citric.acid <-gam(quality~volatile.acidity+s(citric.acid)+s(chlorides)+s(total.sulfur.dioxide)+free.sulfur.dioxide+pH+sulphates+alcohol,data=wine)
+anova(gam.wine,gam.wine.citric.acid,test="F")
+CVgam(formula(gam.wine.citric.acid),wine,nfold=10)
+```
+Using a spline for citric.acid seems to make a difference.
+
+```{r}
+#Using a spline for free.sulfur.dioxide
+gam.wine.free.sulfur.dioxide <-gam(quality~volatile.acidity+s(citric.acid)+s(chlorides)+s(total.sulfur.dioxide)+s(free.sulfur.dioxide)+pH+sulphates+alcohol,data=wine)
+anova(gam.wine,gam.wine.free.sulfur.dioxide,test="F")
+CVgam(formula(gam.wine.free.sulfur.dioxide),wine,nfold=10)
+```
+Using a spline for free.sulfur.dioxide doesn't make a difference.
+
+```{r}
+#Using a spline for pH
+gam.wine.pH <-gam(quality~volatile.acidity+s(citric.acid)+s(chlorides)+s(total.sulfur.dioxide)+free.sulfur.dioxide+s(pH)+sulphates+alcohol,data=wine)
+anova(gam.wine,gam.wine.pH,test="F")
+CVgam(formula(gam.wine.pH),wine,nfold=10)
+```
+Using a spline for pH doesn't make a difference.
+
+```{r}
+#Using a spline for sulphates
+gam.wine.sulphates <-gam(quality~volatile.acidity+s(citric.acid)+s(chlorides)+s(total.sulfur.dioxide)+free.sulfur.dioxide+pH+s(sulphates)+alcohol,data=wine)
+anova(gam.wine,gam.wine.sulphates,test="F")
+CVgam(formula(gam.wine.sulphates),wine,nfold=10)
+```
+Using a spline for sulphates seems to make a difference.
+
+```{r}
+#Using a spline for alcohol
+gam.wine.alcohol <-gam(quality~volatile.acidity+s(citric.acid)+s(chlorides)+s(total.sulfur.dioxide)+free.sulfur.dioxide+pH+s(sulphates)+s(alcohol),data=wine)
+anova(gam.wine,gam.wine.alcohol,test="F")
+CVgam(formula(gam.wine.alcohol),wine,nfold=10)
+```
+Using a spline for alcohol doesn't make a difference.
+
+```{r}
+#plot the final model.
+plot(gam.wine.sulphates)
+```
+
+```{r}
+#We now try an interaction term with splines.
+gam.wine.final <- gam(quality~volatile.acidity+s(citric.acid)+s(chlorides)+s(total.sulfur.dioxide,free.sulfur.dioxide)+pH+s(sulphates)+alcohol,data=wine)
+CVgam(formula(gam.wine.final),wine,nfold = 10)
+plot(gam.wine.final)
+```
+
+final model:quality~volatile.acidity+s(citric.acid)+s(chlorides)+s(total.sulfur.dioxide,free.sulfur.dioxide)+pH+s(sulphates)+alcohol
+
+```{r}
+library(mgcv)
+library(gamclass)
+gam.wine.final <- gam(quality~volatile.acidity+s(citric.acid)+s(chlorides)+s(total.sulfur.dioxide,free.sulfur.dioxide)+pH+s(sulphates)+alcohol,data=wine)
+CVgam(formula(gam.wine.final),wine,nfold = 10)
+plot(gam.wine.final)
+summary(gam.wine.final)
+```
+
+Build a linear model on every predictor. For each such model, perform variable selection using best subset selection. If there are highly non-linear interactions, use splines or polynomial regression.
+```{r}
+#rename the variables
+x1 <- wine$fixed.acidity
+x2 <- wine$volatile.acidity
+x3 <- wine$citric.acid
+x4 <- wine$residual.sugar
+x5 <- wine$chlorides
+x6 <- wine$free.sulfur.dioxide
+x7 <- wine$total.sulfur.dioxide
+x8 <- wine$density
+x9 <- wine$pH
+x10 <- wine$sulphates
+x11 <- wine$alcohol
+x12 <- wine$quality
+```
+
+```{r}
+#Build a linear model on x1 and best subset selection
+wine1 <- data.frame(x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x1)
+library(leaps)
+regfit.full <- regsubsets(x1~.,wine1,nvmax=11)
+regfit.summary <- summary(regfit.full)
+regfit.summary
+plot(regfit.summary$bic)
+which.min(regfit.summary$bic)
+```
+The model does not include x2 and x12.
+
+```{r}
+#check the models chosen by best subset selection using cross validation.
+library(boot)
+CVmse <- rep(0,11)
+for(i in 1:11){
+  tempCols <- which(regfit.summary$which[i,-1]==TRUE)
+  tempCols <- c(tempCols,12)
+  tempCols <- as.numeric(tempCols)
+  tempGLM <- glm(x1~.,data=wine1[,tempCols])
+  tempCV <- cv.glm(tempGLM,data=wine1[,tempCols],K=10)
+  CVmse[i] <- tempCV$delta[1]
+}
+plot(CVmse)
+which.min(CVmse)
+min(CVmse)
+```
+The model with the lowest cross validation error is the 9th model the same as previous.
+```{r}
+lm1 <- lm(x1~x3+x4+x5+x6+x7+x8+x9+x10+x11,data=wine1)
+library(reshape)
+library(ggplot2)
+wine1.melt <- melt(wine1)
+wine1.melt2 <- cbind(wine1.melt,resid=lm1$residuals)
+ggplot(wine1.melt2,aes(x=value,y=resid))+geom_point()+geom_smooth(method="loess")+facet_wrap(~variable,scales="free")
+```
+There are obvious non-linearities with respect to x3, x5, x9, x10.
+
+
+```{r}
+#transforming x3
+x3MSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(x1~.-x2 - x12 - x3 + poly(x3,i),data=wine1)
+  tempCV <- cv.glm(wine1,templm,K = 10)
+  x3MSE[i] <- tempCV$delta[1]
+}
+plot(x3MSE)
+which.min(x3MSE)
+```
+Minimum is obtained with a 5th degree polynomial for x3 but the MSE values are very stable and the difference between a linear model and a polynomial model does not appear to be significant.
+
+```{r}
+#transforming x5
+x5MSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(x1~.-x2 - x12 - x5 + poly(x5,i),data=wine1)
+  tempCV <- cv.glm(wine1,templm,K = 10)
+  x5MSE[i] <- tempCV$delta[1]
+}
+plot(x5MSE)
+which.min(x5MSE)
+```
+Minimum is obtained with a 6th degree polynomial for x5 but the MSE values are very stable and the difference between a linear model and a polynomial model does not appear to be significant.
+
+```{r}
+#transforming x9
+x9MSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(x1~.-x2 - x12 - x9 + poly(x9,i),data=wine1)
+  tempCV <- cv.glm(wine1,templm,K = 10)
+  x9MSE[i] <- tempCV$delta[1]
+}
+plot(x9MSE)
+which.min(x9MSE)
+```
+Minimum is obtained with a 8th degree polynomial for x9 but the MSE values are very stable and the difference between a linear model and a polynomial model does not appear to be significant.
+
+```{r}
+#transforming x10
+x10MSE <- rep(0,10)
+for(i in 1:10){
+  templm <- glm(x1~.-x2 - x12 - x10 + poly(x10,i),data=wine1)
+  tempCV <- cv.glm(wine1,templm,K = 10)
+  x10MSE[i] <- tempCV$delta[1]
+}
+plot(x10MSE)
+which.min(x10MSE)
+```
+Minimum is obtained with a 5th degree polynomial for x10.
+
+```{r}
+#Next, we fit an additive model. We will use splines for the polynomial terms.
+
+gam.wine1 <- gam(x1~x3+x4+x5+x6+x7+x8+x9+s(x10)+x11,data=wine1)
+summary(gam.wine1)
+CVgam(formula(gam.wine1),wine1,nfold=10)
+```
+
+```{r}
+#Fitting Regression Trees
+setwd("/Users/gjy/Desktop/6210/hw/final project")
+library("XLConnect")
+wine <- readWorksheetFromFile("winequality-red.xls",sheet=1,startRow=1)
+wine$no <- NULL
+```
+```{r}
+set.seed(1)
+library(tree)
+train = sample(1:nrow(wine), nrow(wine)/2)
+tree.wine = tree(quality~., data=wine, subset=train)
+summary(tree.wine)
+plot(tree.wine)
+text(tree.wine, prettey=0)
+cv.wine=cv.tree(tree.wine)
+plot(cv.wine$size, cv.wine$dev, type="b")
+prune.wine=prune.tree(tree.wine ,best=5) 
+plot(prune.wine) 
+text(prune.wine ,pretty=0)
+yhat=predict(tree.wine ,newdata=wine[-train ,]) 
+wine.test=wine[-train ,"quality"] 
+plot(yhat,wine.test) 
+abline(0,1)
+mean((yhat-wine.test)^2)
+```
+
+
+```{r}
+#Bagging and Random Forests
+library(randomForest) 
+set.seed (1) 
+bag.wine=randomForest(quality~.,data=wine,subset=train,mtry=13,ntree=25) 
+bag.wine
+yhat.bag = predict(bag.wine ,newdata=wine[-train ,])
+mean((yhat.bag-wine.test)^2)
+```
+
+
+```{r}
+#Boosting
+library(gbm)
+set.seed (1) 
+boost.wine=gbm(quality~.,data=wine[train,],distribution="gaussian",n.trees=5000, interaction.depth=4)
+summary(boost.wine)
+par(mfrow=c(1,2))
+plot(boost.wine, i="alcohol")
+plot(boost.wine, i="sulphates")
+yhat.boost=predict(boost.wine, newdata=wine[-train,], n.trees=5000)
+mean((yhat.boost-wine.test)^2)
+```
+
+
+
+
+
